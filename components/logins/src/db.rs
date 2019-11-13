@@ -298,16 +298,22 @@ impl LoginDb {
     pub fn get_all(&self) -> Result<Vec<Login>> {
         let mut stmt = self.db.prepare_cached(&GET_ALL_SQL)?;
         let rows = stmt.query_and_then(NO_PARAMS, Login::from_row)?;
+        // XXX TODO: what if we read invalid data here?
+        // XXX TODO: do we need to decode anything, e.g. de-punycode the `hostname`?
         rows.collect::<Result<_>>()
     }
 
     pub fn get_by_hostname(&self, hostname: &str) -> Result<Vec<Login>> {
         let mut stmt = self.db.prepare_cached(&GET_ALL_BY_HOSTNAME_SQL)?;
         let rows = stmt.query_and_then(&[hostname], Login::from_row)?;
+        // XXX TODO: what if we read invalid data here?
+        // XXX TODO: do we need to decode anything, e.g. de-punycode the `hostname`?
         rows.collect::<Result<_>>()
     }
 
     pub fn get_by_id(&self, id: &str) -> Result<Option<Login>> {
+        // XXX TODO: what if we read invalid data here?
+        // XXX TODO: do we need to decode anything, e.g. de-punycode the `hostname`?
         self.try_query_row(
             &GET_BY_GUID_SQL,
             &[(":guid", &id as &dyn ToSql)],
@@ -340,6 +346,10 @@ impl LoginDb {
     }
 
     pub fn add(&self, mut login: Login) -> Result<Login> {
+        // XXX TODO: we might want to do some coercions here, e.g.:
+        //
+        //  * Canonicalize `hostname` and `formSubmitURL` into punycode
+        //
         login.check_valid()?;
 
         let tx = self.unchecked_transaction()?;
@@ -474,6 +484,11 @@ impl LoginDb {
         );
         let mut num_failed = 0;
         for login in logins {
+            // XXX TODO: we might want to do some coercions here, e.g.:
+            //
+            //  * Canonicalize `hostname` and `formSubmitURL` into punycode
+            //  * anything else?
+            //
             if let Err(e) = login.check_valid() {
                 log::warn!("Skipping login {} as it is invalid ({}).", login.guid, e);
                 num_failed += 1;
@@ -515,6 +530,11 @@ impl LoginDb {
     }
 
     pub fn update(&self, login: Login) -> Result<()> {
+        // XXX TODO: we might want to do some coercions here, e.g.:
+        //
+        //  * Canonicalize `hostname` and `formSubmitURL` into punycode
+        //  * anything else?
+        //
         login.check_valid()?;
         let tx = self.unchecked_transaction()?;
         // Note: These fail with DuplicateGuid if the record doesn't exist.

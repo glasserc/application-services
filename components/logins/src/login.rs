@@ -2,6 +2,156 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+//
+//  N.B. if you're making a documentation change here, you might also want to make it in:
+//
+//    * The API docs in ../ios/Logins/LoginRecord.swift
+//    * The API docs in ../android/src/main/java/mozilla/appservices/logins/ServerPassword.kt
+//    * The android-components docs at
+//      https://github.com/mozilla-mobile/android-components/tree/master/components/service/sync-logins
+//
+
+//! Login Records
+//! =============
+//!
+//! The core datatype managed by this component is a "login record", which contains the following fields:
+//!
+//!  XXX TODO: 'matches origin' means e.g. eTLD+1 matching, ref some other documentation.
+//! 
+//!  - `id`:    A unique string identifier for this record.
+//!
+//!              Consumers may assume that `id` contains only "safe" ASCII characters but should otherwise
+//!              treat this it as an opaque identifier. It should be left blank when adding a new record,
+//!              in which case a new id will be automatically generated.
+//!
+//!  - `hostname`:  The origin at which this login can be used, as a string.
+//!                 The login should only be used on sites that match this origin.
+//!                 This field is required, must be a valid origin, and must not be set to the empty string.
+//!
+//!                 YES, THIS FIELD IS CONFUSINGLY NAMED. IT SHOULD BE A FULL ORIGIN, NOT A HOSTNAME.
+//!                 WE INTEND TO RENAME THIS TO `origin` IN A FUTURE RELEASE.
+//!
+//!                 The application may provide unicode strings for this field, but it will be normalized
+//!                 to punycode internally for the purposes of storage and duplicate checking, and will be
+//!                 returned as punycode upon read.
+//!                 examples from mattn: "https://site.com", "http://site.com:1234", "ftp://ftp.site.com", "
+//!                     "moz-proxy://127.0.0.1:8888"
+//!                     "chrome://MyLegacyExtension"
+//!                     "file:///"
+//!
+//!                 XXX TODO: how to provide the non-punycode version to the app easily?
+//!
+//!  - `password`:  The saved password, as a string.
+//!                 This field is required and must not be set to the empty string.
+//!                 There are no other restrictions on the contents of this field, it can be an arbitrary
+//!                 unicode string.  (XXX TODO although maybe the legacy text-file limits from desktop?)
+//!
+//!  - `username`:  The username associated with this login, if any, as a string.
+//!                 This field is required, but may be set to the empty string if no username is associated
+//!                 with the login.  There are no other restrictions on the contents of this field, it can be
+//!                 an arbitrary unicode string.  (XXX TODO: although maybe the legacy text-file limits from desktop?)
+//!
+//!  - `httpRealm`: The challenge string for HTTP Basic authentication, if any.
+//!                 If present, the login should only be used in response to a HTTP Basic Auth
+//!                 challenge that specifies a matching realm. There are no restrictions on the
+//!                 contents of this string.
+//!
+//!                 If this field is set to the empty string, this indicates a wildcard match on realm.
+//!
+//!                 This field must not be present if `formSubmitURL` is set, since they indicate
+//!                 different types of login (HTTP-Auth based versus form-based). Exactly one of `httpRealm`
+//!                 and `formSubmitURL` must be present.
+//!
+//!  - `formSubmitURL`: The target origin of forms in which this login can be used, if any, as a string.
+//!                     If present, the login should only be used in forms whose target submission URL
+//!                     matches this origin. This field must be a valid origin or one of the special
+//!                     values listed below.
+//!
+//!                 YES, THIS FIELD IS CONFUSINGLY NAMED. IT SHOULD BE AN ORIGIN, NOT A FULL URL.
+//!                 WE INTEND TO RENAME THIS TO `formActionOrigin` IN A FUTURE RELEASE.
+//!
+//!                 The application may provide unicode strings for this field, but it will be normalized
+//!                 to punycode internally for the purposes of storage and duplicate checking, and will be
+//!                 returned as punycode upon read.
+//!
+//!                 This field must not be present if `httpRealm` is set, since they indicate different
+//!                 types of login (HTTP-Auth based versus form-based). Exactly one of `httpRealm` and
+//!                 `formSubmitURL` must be present.
+//!
+//!                 XXX TODO: can it be blank? does being blank count as being present for the
+//!                 purposes of conflicting with `formSubmitURL`? does that mean it can be used
+//!                 with any realm?  from matt: empty string means wildcard match
+//!                 it can also be "javascript:" to match any form with a javascript action
+//!
+//!                 XXX TODO: how to provide the non-punycode version to the app easily?
+//!
+//!  -`usernameField`:  The `name` attribute of the form field into which the `username` should be filled, if any.
+//!                     This value is stored if provided by the application, but not imply any restrictions on
+//!                     how the login may be used. There are no restrictions on the contents of this string.
+//!
+//!                     For logins without a `formSubmitURL` this field will be set to the empty string.
+//!
+//!
+//!                 XXX TODO: can this be present if `formSubmitURL` is not set?
+//!
+//!  -`passwordField`:  The HTML form field into which the `password` field should be filled, if any.
+//!                     This value is stored if provided by the application, but not imply any restrictions on
+//!                     how the login may be used. There are no restrictions on the contents of this string.
+//!
+//!                     For logins without a `formSubmitURL` this field will be set to the empty string.
+//!
+//!  - `timesUsed`: A lower bound on the number of times the password from this record has been "used", as an integer.
+//!                 Applications should use the `touch()` method of the logins store to indicate when a password
+//!                 has been used, and should ensure that they only count uses of the actual `password` field
+//!                 (so for example, copying the `password` field to the clipboard should count as a "use", but
+//!                 copying just the `username` field should not).
+//!
+//!                 This number may not record uses that occurred on other devices, since some legacy
+//!                 sync clients do not record this information. It may be zero for records obtained
+//!                 via sync that have never been used locally. When merging duplicate records, the largest
+//!                 non-zero value is taken.
+//!
+//!                 This field is managed internally by the logins store by default and does not need to
+//!                 be set explicitly, although any application-provided value will be stored.
+//!
+//!                 XXX TODO: what's the merge strategy for duplicates?
+//!
+//!  - `timeCreated`: An upper bound on the time of creation of this login, in integer milliseconds from the unix epoch.
+//!
+//!                 This is an upper bound because some legacy sync clients do not record this information;
+//!                 in that case newer clients set `timeCreated` when they see the record for the first time.
+//!
+//!                 This field is managed internally by the logins store by default and does not need to
+//!                 be set explicitly, although any application-provided value will be stored. When merging
+//!                 duplicate records, the smallest non-zero value is taken.
+//!
+//!                 XXX TODO: these are local machine timestamps, and thus possibly wildly inaccurate...
+//!
+//!  - `timeLastUsed`: A lower bound on the time of last use of this login, in integer milliseconds from the unix epoch.
+//!
+//!                 This is a lower bound because some legacy sync clients do not record this information;
+//!                in that case newer clients set `timeLastUsed` when they use the record for the first time.
+//!
+//!                 This field is managed internally by the logins store by default and does not need to
+//!                 be set explicitly, although any application-provided value will be stored. When merging
+//!                 duplicate records, the largest non-zero value is taken.
+//!
+//!                 XXX TODO: these are local machine timestamps, and thus possibly wildly inaccurate...
+//!
+//!  - `timePasswordChanged`: A lower bound on the time that the `password` field was last changed, in integer
+//!                           milliseconds from the unix epoch.  Changes to other fields (such as `username`)
+//!                           are not reflected in this timestamp.
+//!
+//!                This is a lower bound because some legacy sync clients do not record this information;
+//!                in that case newer clients set `timePasswordChanged` when they change the `password` field.
+//!
+//!                 This field is managed internally by the logins store by default and does not need to
+//!                 be set explicitly, although any application-provided value will be stored. When merging
+//!                 duplicate records, the largest non-zero value is taken.
+//!
+//!                 XXX TODO: these are local machine timestamps, and thus possibly wildly inaccurate...
+//!
+
 use crate::error::*;
 use crate::util;
 use rusqlite::Row;
