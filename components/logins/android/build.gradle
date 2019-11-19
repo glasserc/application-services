@@ -1,3 +1,7 @@
+plugins {
+    id "com.jetbrains.python.envs" version "0.0.26"
+}
+
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-android-extensions'
@@ -56,6 +60,8 @@ dependencies {
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
 
+    implementation "org.mozilla.components:service-glean:$android_components_version"
+
     api project(":full-megazord")
     implementation project(":native-support")
 
@@ -92,5 +98,6 @@ afterEvaluate {
 }
 
 apply from: "$rootDir/publish.gradle"
+apply from: "https://github.com/mozilla-mobile/android-components/raw/v$android_components_version/components/service/glean/scripts/sdk_generator.gradle"
 
 ext.configurePublish()

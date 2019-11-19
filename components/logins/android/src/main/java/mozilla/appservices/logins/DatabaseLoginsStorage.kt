@@ -7,6 +7,7 @@ package mozilla.appservices.logins
 import com.sun.jna.Pointer
 import mozilla.appservices.logins.rust.PasswordSyncAdapter
 import mozilla.appservices.logins.rust.RustError
+import org.mozilla.appservices.logins.GleanMetrics.LoginsStore as LoginsStoreMetrics
 import mozilla.appservices.sync15.SyncTelemetryPing
 import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONArray
@@ -59,10 +60,24 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
             if (!isLocked()) {
                 throw MismatchedLockException("Unlock called when we are already unlocked")
             }
-            raw.set(PasswordSyncAdapter.INSTANCE.sync15_passwords_state_new(
-                    dbPath,
-                    encryptionKey,
-                    it))
+            LoginsStoreMetrics.unlockCount.add()
+            try {
+                val timer = LoginsStoreMetrics.unlockTime.start()
+                try {
+                    raw.set(PasswordSyncAdapter.INSTANCE.sync15_passwords_state_new(
+                            dbPath,
+                            encryptionKey,
+                            it))
+                } finally {
+                    LoginsStoreMetrics.unlockTime.stopAndAccumulate(timer)
+                }
+            } catch (e: Exception) {
+                LoginsStoreMetrics.unlockErrorCount["some_label"].add()
+                throw e
+            }
+            // XXX TODO: the app might not be happy to have db access right on startup?
+            // Probably not an issue for logins, but would love to find a better pattern here...
+            gatherSnapshotMetrics()
         }
     }
 
@@ -73,11 +88,23 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
             if (!isLocked()) {
                 throw MismatchedLockException("Unlock called when we are already unlocked")
             }
-            raw.set(PasswordSyncAdapter.INSTANCE.sync15_passwords_state_new_with_hex_key(
-                    dbPath,
-                    encryptionKey,
-                    encryptionKey.size,
-                    it))
+            LoginsStoreMetrics.unlockCount.add()
+            try {
+                val timer = LoginsStoreMetrics.unlockTime.start()
+                try {
+                    raw.set(PasswordSyncAdapter.INSTANCE.sync15_passwords_state_new_with_hex_key(
+                            dbPath,
+                            encryptionKey,
+                            encryptionKey.size,
+                            it))
+                } finally {
+                    LoginsStoreMetrics.unlockTime.stopAndAccumulate(timer)
+                }
+            } catch (e: Exception) {
+                LoginsStoreMetrics.unlockErrorCount["some_label"].add()
+                throw e
+            }
+            gatherSnapshotMetrics()
         }
     }
 
@@ -116,6 +143,11 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
                     error
             )?.getAndConsumeRustString()
         }
+        // XXX TODO: Fenix won't actually call this IIUC, because it uses the
+        // SyncManager, which plugs in directly at the Rust level.
+        gatherSnapshotMetrics()
+        // XXX TODO maybe even insert iti nto the sync ping while we're here?
+        // Or should the rust code do that for us?
         return SyncTelemetryPing.fromJSONString(json)
     }
 
@@ -124,6 +156,7 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
         rustCallWithLock { raw, error ->
             PasswordSyncAdapter.INSTANCE.sync15_passwords_reset(raw, error)
         }
+        gatherSnapshotMetrics()
     }
 
     @Throws(LoginsStorageException::class)
@@ -131,6 +164,7 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
         rustCallWithLock { raw, error ->
             PasswordSyncAdapter.INSTANCE.sync15_passwords_wipe(raw, error)
         }
+        gatherSnapshotMetrics()
     }
 
     @Throws(LoginsStorageException::class)
@@ -138,53 +172,69 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
         rustCallWithLock { raw, error ->
             PasswordSyncAdapter.INSTANCE.sync15_passwords_wipe_local(raw, error)
         }
+        gatherSnapshotMetrics()
     }
 
     @Throws(LoginsStorageException::class)
     override fun delete(id: String): Boolean {
-        return rustCallWithLock { raw, error ->
-            val deleted = PasswordSyncAdapter.INSTANCE.sync15_passwords_delete(raw, id, error)
-            deleted.toInt() != 0
+        return withQueryMetricsWrite {
+            rustCallWithLock { raw, error ->
+                val deleted = PasswordSyncAdapter.INSTANCE.sync15_passwords_delete(raw, id, error)
+                deleted.toInt() != 0
+            }
         }
+
     }
 
     @Throws(LoginsStorageException::class)
     override fun get(id: String): ServerPassword? {
-        val json = nullableRustCallWithLock { raw, error ->
-            PasswordSyncAdapter.INSTANCE.sync15_passwords_get_by_id(raw, id, error)
-        }?.getAndConsumeRustString()
-        return json?.let { ServerPassword.fromJSON(it) }
+        return withQueryMetricsRead {
+            val json = nullableRustCallWithLock { raw, error ->
+                PasswordSyncAdapter.INSTANCE.sync15_passwords_get_by_id(raw, id, error)
+            }?.getAndConsumeRustString()
+            json?.let { ServerPassword.fromJSON(it) }
+        }
     }
 
     @Throws(LoginsStorageException::class)
     override fun touch(id: String) {
-        rustCallWithLock { raw, error ->
-            PasswordSyncAdapter.INSTANCE.sync15_passwords_touch(raw, id, error)
+        return withQueryMetricsWrite {
+            rustCallWithLock { raw, error ->
+                PasswordSyncAdapter.INSTANCE.sync15_passwords_touch(raw, id, error)
+            }
         }
     }
 
     @Throws(LoginsStorageException::class)
     override fun list(): List<ServerPassword> {
-        val json = rustCallWithLock { raw, error ->
-            PasswordSyncAdapter.INSTANCE.sync15_passwords_get_all(raw, error)
-        }.getAndConsumeRustString()
-        return ServerPassword.fromJSONArray(json)
+        return withQueryMetricsRead {
+            val json = rustCallWithLock { raw, error ->
+                PasswordSyncAdapter.INSTANCE.sync15_passwords_get_all(raw, error)
+            }.getAndConsumeRustString()
+            ServerPassword.fromJSONArray(json)
+            // XXX TODO: we could set snapshot metrics here, since we
+            // just ready all the logins into memory
+        }
     }
 
     @Throws(LoginsStorageException::class)
     override fun getByHostname(hostname: String): List<ServerPassword> {
-        val json = rustCallWithLock { raw, error ->
-            PasswordSyncAdapter.INSTANCE.sync15_passwords_get_by_hostname(raw, hostname, error)
-        }.getAndConsumeRustString()
-        return ServerPassword.fromJSONArray(json)
+        return withQueryMetricsRead {
+            val json = rustCallWithLock { raw, error ->
+                PasswordSyncAdapter.INSTANCE.sync15_passwords_get_by_hostname(raw, hostname, error)
+            }.getAndConsumeRustString()
+            ServerPassword.fromJSONArray(json)
+        }
     }
 
     @Throws(LoginsStorageException::class)
     override fun add(login: ServerPassword): String {
-        val s = login.toJSON().toString()
-        return rustCallWithLock { raw, error ->
-            PasswordSyncAdapter.INSTANCE.sync15_passwords_add(raw, s, error)
-        }.getAndConsumeRustString()
+        return withQueryMetricsWrite {
+            val s = login.toJSON().toString()
+            rustCallWithLock { raw, error ->
+                PasswordSyncAdapter.INSTANCE.sync15_passwords_add(raw, s, error)
+            }.getAndConsumeRustString()
+        }
     }
 
     @Throws(LoginsStorageException::class)
@@ -194,16 +244,20 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
                 put(it.toJSON())
             }
         }.toString()
-        return rustCallWithLock { raw, error ->
-            PasswordSyncAdapter.INSTANCE.sync15_passwords_import(raw, s, error)
+        return withQueryMetricsWrite {
+            rustCallWithLock { raw, error ->
+                PasswordSyncAdapter.INSTANCE.sync15_passwords_import(raw, s, error)
+            }
         }
     }
 
     @Throws(LoginsStorageException::class)
     override fun update(login: ServerPassword) {
         val s = login.toJSON().toString()
-        return rustCallWithLock { raw, error ->
-            PasswordSyncAdapter.INSTANCE.sync15_passwords_update(raw, s, error)
+        return withQueryMetricsWrite {
+            rustCallWithLock { raw, error ->
+                PasswordSyncAdapter.INSTANCE.sync15_passwords_update(raw, s, error)
+            }
         }
     }
 
@@ -215,6 +269,44 @@ class DatabaseLoginsStorage(private val dbPath: String) : AutoCloseable, LoginsS
             rustCall { err ->
                 PasswordSyncAdapter.INSTANCE.sync15_passwords_state_destroy(handle, err)
             }
+        }
+    }
+
+    private fun gatherSnapshotMetrics() {
+        // XXX TODO: ask the rust code to return snapshot metrics from the db.
+        LoginsStoreMetrics.loginLastUsedDays.accumulateSamples(longArrayOf(1L,2L,3L,4L,5L))
+        // XXX TODO: hmm, histogram probably won't work here as we can't clear it to set the new value,
+        // this will just *add* the current count to the set of existing values.
+        LoginsStoreMetrics.numSavedPasswords.accumulateSamples(longArrayOf(42L))
+    }
+
+    private inline fun <U> withQueryMetricsRead(callback: () -> U): U {
+        LoginsStoreMetrics.readQueryCount.add()
+        try {
+            val timer = LoginsStoreMetrics.readQueryTime.start()
+            try {
+                return callback()
+            } finally {
+                LoginsStoreMetrics.readQueryTime.stopAndAccumulate(timer)
+            }
+        } catch (e: Exception) {
+            LoginsStoreMetrics.readQueryErrorCount["some_label"].add()
+            throw e
+        }
+    }
+
+    private inline fun <U> withQueryMetricsWrite(callback: () -> U): U {
+        LoginsStoreMetrics.writeQueryCount.add()
+        try {
+            val timer = LoginsStoreMetrics.writeQueryTime.start()
+            try {
+                return callback()
+            } finally {
+                LoginsStoreMetrics.writeQueryTime.stopAndAccumulate(timer)
+            }
+        } catch (e: Exception) {
+            LoginsStoreMetrics.writeQueryErrorCount["some_label"].add()
+            throw e
         }
     }
 

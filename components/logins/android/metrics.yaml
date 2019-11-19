@@ -1,0 +1,252 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# This file defines the metrics that will be gathered for the "logins" storage component.
+# These are emitted for all users of the component.  Additional metrics specific to the
+# *syncing* of logins are defined in a separate "sync_ping" package.
+
+$schema: moz://mozilla.org/schemas/glean/metrics/1-0-0
+
+logins_store:
+
+  # These are high-level product success metrics.
+  # We'll use them to compare how users are getting value out of their saved logis
+  # across apps and platforms, e.g. by comparing these values from Fenix and Desktop.
+  #
+  # XXX TODO: we should also arrange for these to go in the sync ping, like they do on Desktop.
+
+  num_saved_passwords:
+    # XXX TODO: what datatype to use here?
+    # The corresponding desktop metric is a histogram, and I think we should do similarly,
+    # for two reasons:
+    #  1) So that we can compare relatively directly against metrics from desktop.
+    #  2) To guard anonymity for sync users. We can look at sync data on the server to get a
+    #     pretty good idea of how many logins a user has stored in their account, so if we
+    #     see that there's one user with exactly 273 logins stored in sync, and we see one
+    #     telemetry client_id submitting `num_saved_password` measures of exactly 273, then
+    #     we've got a pretty good idea who those telemetry pings below to.
+    #
+    # But we can't do that right now, because:
+    #
+    #    * The `custom_distribution` type which implements ad-hoc histograms,
+    #      is currently reserved for geckoview metrics only.
+    #    * There's no way to clear this metric type and reset its value, so even if we used
+    #      it we would be accumulating the distribution of the number of saved passwords
+    #      over time, rather than a snapshot at a particular point in time.
+    #
+    type: custom_distribution
+    range_min: 0
+    range_max: 750
+    bucket_count: 50
+    histogram_type: exponential
+    description: >
+      The total number of saved logins in the store.
+      This number is collected opportunistically (e.g. at startup, after a sync) and may not
+      reflect the precise count of saved logins at the time of the telemetry ping. It is
+      designed to be comparable to the Desktop telemetry datapoint `PWMGR_NUM_SAVED_PASSWORDS`.
+      Ref https://dxr.mozilla.org/mozilla-central/rev/d6844fe546ad129a6b2c93dd2e70a75d40e7ffca/toolkit/components/telemetry/Histograms.json#12363
+    lifetime: "application"
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "never"
+    gecko_datapoint: DONT_STOP_ME_NOW
+
+  login_last_used_days:
+    # XXX TODO: what datatype to use here?
+    # The corresponding desktop metric is a histogram, which feels right in this case.
+    #
+    # But we can't do that right now, because:
+    #
+    #    * The `custom_distribution` type which implements ad-hoc histograms,
+    #      is currently reserved for geckoview metrics only.
+    #    * There's no way to clear this metric type and reset its value, so even if we used
+    #      it we would be accumulating the distribution of the last-used measurements of the
+    #      set of logins over time, rather than a snapshot at a particular point in time.
+    #
+    type: custom_distribution
+    range_min: 0
+    range_max: 750
+    bucket_count: 40
+    histogram_type: exponential
+    description: >
+      Time in days since each saved login was last used.
+      This distribution is collected opportunistically (e.g. at startup, after a sync) and may not
+      reflect the precise breakdown of last-used timestamps at the time of the telemetry ping. It is
+      designed to be comparable to the Desktop telemetry datapoint `PWMGR_LOGIN_LAST_USED_DAYS`.
+      Ref https://dxr.mozilla.org/mozilla-central/rev/d6844fe546ad129a6b2c93dd2e70a75d40e7ffca/toolkit/components/telemetry/Histograms.json#12266
+    lifetime: "application"
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "never"
+    gecko_datapoint: YOU_CANT_STOP_THE_BEAT
+
+  # These help us understand how much the logins store is being used, and whether it's succeeding
+  # in the duties asked of it.  We'll use them to graph e.g. the error rate of applications trying
+  # to use the logins store, and identify application or platform features that lead to unusually
+  # high error rates.
+
+  unlock_count:
+    type: counter
+    description: >
+      The number of times the login store was unlocked.
+      It is intended to be used together with `unlock_error_count` to measure the overall 
+      error rate of unlocking the logins store.
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  unlock_error_count:
+    type: labeled_counter
+    labels:
+      # XXX TODO: the labels, what should they be?
+      # One for each different type of failure that we expose over the FFI?
+      # Can we distinguish "unexpected" failures more specifically?
+      - some_label
+    description: >
+      The number of errors encountered when unlocking the logins store, labelled by error type.
+      It is intended to be used together with `unlock_count` to measure the overall error
+      rate of unlocking the logins store.
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  read_query_count:
+    type: counter
+    description: >
+      The total number of read operations performed on the logins store.
+      The count only includes operations triggered by the application, not e.g. incidental reads performed
+      as part of a sync. It is intended to be used together with `read_query_error_count` to measure the 
+      overall error rate of read operations on the logins store.
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  read_query_error_count:
+    type: labeled_counter
+    labels:
+      # XXX TODO: the labels, what should they be?
+      # One for each different type of failure that we expose over the FFI?
+      # Can we distinguish "unexpected" failures more specifically?
+      - some_label
+    description: >
+      The total number of unexpected errors encountered during read operations on the logins store,
+      labelled by error type. The count only includes operations triggered by the application, not e.g.
+      incidental reads performed as part of a sync. It is intended to be used together with `read_query_count`
+      to measure the overall error rate of read operations on the logins store.
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  write_query_count:
+    type: counter
+    description: >
+      The total number of write operations performed on the logins store.
+      The count only includes operations triggered by the application, not e.g. incidental writes performed
+      as part of a sync. It is intended to be used together with `write_query_error_count` to measure the 
+      overall error rate of write operations on the logins store.
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  write_query_error_count:
+    type: labeled_counter
+    labels:
+      # XXX TODO: the labels, what should they be?
+      # One for each different type of failure that we expose over the FFI?
+      # Can we distinguish "unexpected" failures more specifically?
+      - some_label
+    description: >
+      The total number of unexpected errors encountered during write operations on the logins store,
+      labelled by error type. The count only includes operations triggered by the application, not e.g.
+      incidental writes performed as part of a sync. It is intended to be used together with `write_query_count`
+      to measure the overall error rate of write operations on the logins store.
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  # These help us understand the performance of the logins store in the wild.
+  # We'll use them to identify any application or platform features that are leading to unacceptably
+  # slow performance of the store, and eventually for comparison with other logins store implementations
+  # (such as the one in Desktop).
+
+  unlock_time:
+    type: timing_distribution
+    description: >
+      The time taken to open the logins store on startup, or after locking it due to user inactivity.
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  read_query_time:
+    type: timing_distribution
+    description: >
+      The time taken to execute a read query on the logins store (such as listing all logins, or finding a
+      specific login by id).
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
+
+  write_query_time:
+    type: timing_distribution
+    description: >
+      The time taken to execute a write query on the logins store (such as adding, updating, or deleting
+      a login record).
+    bugs:
+      - https://github.com/mozilla/application-services/issues/2174
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1597895
+      - https://github.com/mozilla/application-services/issues/2173
+    notification_emails:
+      - synced-client-integrations@mozilla.com
+    expires: "2020-07-01"
