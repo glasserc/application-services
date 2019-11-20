@@ -74,6 +74,14 @@ pub enum InvalidLogin {
     DuplicateLogin,
     #[fail(display = "Both `formSubmitUrl` and `httpRealm` are present")]
     BothTargets,
-    #[fail(display = "Neither `formSubmitUrl` and `httpRealm` are present")]
+    #[fail(display = "Neither `formSubmitUrl` or `httpRealm` are present")]
     NoTarget,
+    #[fail(display = "Login contain nulls")]
+    NullValues,
+    #[fail(display = "Login contains newlines")]
+    NewLineValues,
+    #[fail(display = "Login are periods")]
+    PeriodValue,
+    #[fail(display = "Bad parens in origin")]
+    MalformedOriginParens,
 }

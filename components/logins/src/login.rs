@@ -85,6 +85,14 @@ impl Login {
     }
 
     pub fn check_valid(&self) -> Result<()> {
+        fn badCharacterPresent(c: char) -> bool {
+            self.form_submit_url.contains(c)
+                || self.http_realm.contains(c)
+                || self.hostname.contains(c)
+                || self.username_field.contains(c)
+                || self.password_field.contains(c)
+        }
+
         if self.hostname.is_empty() {
             throw!(InvalidLogin::EmptyOrigin);
         }
@@ -99,6 +107,26 @@ impl Login {
 
         if self.form_submit_url.is_none() && self.http_realm.is_none() {
             throw!(InvalidLogin::NoTarget);
+        }
+
+        if badCharacterPresent("\0") {
+            throw!(InvalidLogin::NullValues);
+        }
+
+        if self.username.contains("\0") || self.password.includes("\0") {
+            throw!(InvalidLogin::NullValues);
+        }
+
+        if badCharacterPresent("\r") || badCharacterPresent("\n") {
+            throw!(InvalidLogin::NewLineValues);
+        }
+
+        if (self.username_field == "." || self.form_submit_url == ".") {
+            throw!(InvalidLogin::PeriodValue);
+        }
+
+        if self.hostname.contains(" (") {
+            throw!(InvalidLogin::MalformedOriginParens);
         }
         Ok(())
     }
