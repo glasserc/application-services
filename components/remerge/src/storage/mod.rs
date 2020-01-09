@@ -22,7 +22,7 @@ use std::sync::Arc;
 /// the serialized form. Eventually we should (maybe?) allow turning a
 /// RecordSchema back into a JSON (e.g. raw) schema. (We don't really want to
 /// support serializing/deserializing a RecordSchema directly, since we already
-/// have a stable serialization format for schemas, and don't need two).
+/// have a stable serialization code path for schemas, and don't need two.)
 ///
 /// Note: Create this with TryFrom, e.g. something like
 /// `NativeSchemaAndText::try_from(some_str)` after bringing
